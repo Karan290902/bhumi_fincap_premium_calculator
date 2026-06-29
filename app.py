@@ -2,10 +2,10 @@ import io
 import re
 import pandas as pd
 import streamlit as st
+from openpyxl.styles import PatternFill
 
 # --- CONSTANTS ---
 RATE_PER_LAKH = 435.0
-GST_RATE = 0.18
 
 # Define the exact required output columns in order
 OUTPUT_COLUMNS = [
@@ -55,9 +55,15 @@ def normalize_text(text: str) -> str:
 
 
 def calculate_premium_metrics(opted_sum_assured: float):
-    """Calculate Total Premium, Premium (excl. GST), and GST components."""
+    """Calculate Total Premium, Premium (excl. GST), and GST components.
+
+    Formula:
+    Total Premium = (Opted Sum Assured / 100,000) * 435
+    Premium = Total Premium / 1.18
+    GST = Total Premium - Premium
+    """
     total_premium = (opted_sum_assured / 100000.0) * RATE_PER_LAKH
-    premium = total_premium / (1.0 + GST_RATE)
+    premium = total_premium / 1.18
     gst = total_premium - premium
     return premium, gst, total_premium
 
@@ -185,16 +191,41 @@ else:
             sum_col2.metric("Total Sum Assured", f"₹{total_sa:,.2f}")
             sum_col3.metric("Total Premium (Incl. GST)", f"₹{total_prem_sum:,.2f}")
 
-            # --- OUTPUT PREVIEW ---
+            # --- OUTPUT PREVIEW WITH STYLED HIGHLIGHT ---
             st.subheader("Output Preview")
-            st.dataframe(df_output)
+            
+            # Function to highlight calculated columns yellow in the Streamlit preview UI
+            def highlight_calculated_cols(s):
+                color = "background-color: yellow"
+                return [color if s.name in ["Premium", "GST", "Total Premium"] else "" for _ in s]
+                
+            st.dataframe(df_output.style.apply(highlight_calculated_cols, axis=0))
 
-            # --- EXPORT TO EXCEL ---
+            # --- EXPORT TO EXCEL WITH YELLOW HIGHLIGHTS ---
             output_buffer = io.BytesIO()
-            with pd.ExcelWriter(
-                output_buffer, engine="openpyxl"
-            ) as writer:
+            with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
                 df_output.to_excel(writer, index=False, sheet_name="GTL Premium")
+                
+                # Access workbook objects to apply custom cell fill colors
+                workbook = writer.book
+                worksheet = writer.sheets["GTL Premium"]
+                
+                # Yellow fill setup for target columns
+                yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                
+                # Target columns to highlight (Premium, GST, Total Premium are the last three columns)
+                calc_col_indices = [
+                    df_output.columns.get_loc("Premium") + 1,
+                    df_output.columns.get_loc("GST") + 1,
+                    df_output.columns.get_loc("Total Premium") + 1
+                ]
+                
+                # Iterate columns and apply yellow background to data rows
+                for col_idx in calc_col_indices:
+                    for row_idx in range(2, len(df_output) + 2):  # Start at row 2 to avoid header row
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.fill = yellow_fill
+
             excel_data = output_buffer.getvalue()
 
             st.download_button(
